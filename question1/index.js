@@ -5,8 +5,10 @@ const axios = require('axios');
 const app = express();
 const PORT = 9876;
 const WINDOW_SIZE = 10;
+const Thirdpartyurl = "http://20.244.56.144/evaluation-service";
 
-// Define the endpoints for each number type
+
+// Short form endpoints
 const ENDPOINTS = {
   p: 'http://20.244.56.144/test/prime',
   f: 'http://20.244.56.144/test/fibo',
@@ -14,7 +16,15 @@ const ENDPOINTS = {
   r: 'http://20.244.56.144/test/rand'
 };
 
-// Initialize sliding windows for each number type
+// Full name to short key mapping
+const ALIASES = {
+  prime: 'p',
+  fibo: 'f',
+  even: 'e',
+  rand: 'r'
+};
+
+// Store a sliding window for each type
 const windows = {
   p: [],
   f: [],
@@ -22,23 +32,32 @@ const windows = {
   r: []
 };
 
-// Helper function to calculate average
+// Function to calculate average
 function calculateAverage(numbers) {
   if (numbers.length === 0) return 0;
   const sum = numbers.reduce((acc, num) => acc + num, 0);
   return parseFloat((sum / numbers.length).toFixed(2));
 }
 
+// Route to fetch numbers
 app.get('/numbers/:numberid', async (req, res) => {
-  const { numberid } = req.params;
+  let { numberid } = req.params;
+  numberid = numberid.toLowerCase().trim();
 
-  // Validate numberid
-  if (!ENDPOINTS[numberid]) {
-    return res.status(400).json({ error: 'Invalid number ID' });
+  // Convert alias to short key
+  if (ALIASES[numberid]) {
+    numberid = ALIASES[numberid];
   }
 
-  const previousWindow = [...windows[numberid]];
-  let fetchedNumbers = [];
+  // Validate number ID
+  if (!ENDPOINTS.hasOwnProperty(numberid)) {
+    return res.status(400).json({
+      error: "Invalid number ID. Allowed values: 'p', 'f', 'e', 'r' or 'prime', 'fibo', 'even', 'rand'"
+    });
+  }
+
+  const prevWindow = [...windows[numberid]];
+  let newNumbers = [];
 
   try {
     const response = await axios.get(ENDPOINTS[numberid], {
@@ -48,11 +67,9 @@ app.get('/numbers/:numberid', async (req, res) => {
       }
     });
 
-    // Assuming the API returns an object with a 'numbers' array
-    fetchedNumbers = response.data.numbers || [];
+    const received = response.data.numbers || [];
 
-    // Update the sliding window with unique numbers
-    fetchedNumbers.forEach((num) => {
+    received.forEach(num => {
       if (!windows[numberid].includes(num)) {
         windows[numberid].push(num);
         if (windows[numberid].length > WINDOW_SIZE) {
@@ -61,24 +78,26 @@ app.get('/numbers/:numberid', async (req, res) => {
       }
     });
 
-    const currentWindow = [...windows[numberid]];
-    const average = calculateAverage(currentWindow);
+    newNumbers = received;
 
     return res.json({
-      windowPrevState: previousWindow,
-      windowCurrState: currentWindow,
-      numbers: fetchedNumbers,
-      avg: average
+      windowPrevState: prevWindow,
+      windowCurrState: [...windows[numberid]],
+      numbers: newNumbers,
+      avg: calculateAverage(windows[numberid])
     });
+
   } catch (error) {
-    // Handle timeout or other errors
     if (error.code === 'ECONNABORTED') {
-      return res.status(504).json({ error: 'Request timed out' });
+      return res.status(504).json({ error: 'Request to third-party API timed out' });
+    } else if (error.response) {
+      return res.status(error.response.status).json({ error: 'Third-party API error', details: error.response.data });
+    } else {
+      return res.status(500).json({ error: 'Internal server error' });
     }
-    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server is running at http://localhost:${PORT}`);
 });
